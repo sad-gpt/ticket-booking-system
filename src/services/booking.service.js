@@ -1,8 +1,10 @@
 import prisma from '../config/prisma.js';
+import redis from '../config/redis.js';
 import bookingRepository from '../repositories/booking.repository.js';
 import userRepository from '../repositories/user.repository.js';
 import eventRepository from '../repositories/event.repository.js';
 import seatRepository from '../repositories/seat.repository.js';
+import reservationService from './reservation.service.js';
 import { ApiError } from '../utils/ApiError.js';
 
 /**
@@ -12,8 +14,7 @@ import { ApiError } from '../utils/ApiError.js';
 const createBooking = async (bookingBody) => {
   const { userId, eventId, seatId } = bookingBody;
 
-  // 1. Initial Validations (Reads can happen outside transaction for efficiency, 
-  // but status check should ideally be inside if we want strict consistency)
+  // 1. Initial Validations
   const user = await userRepository.getUserById(userId);
   if (!user) throw new ApiError(404, 'User not found');
 
@@ -27,10 +28,22 @@ const createBooking = async (bookingBody) => {
     throw new ApiError(400, 'Seat does not belong to the venue of this event');
   }
 
-  // Orchestrate Transaction
-  return prisma.$transaction(async (tx) => {
-    // 2. Re-verify availability inside transaction to prevent race conditions
-    // (Prisma unique constraint also protects this, but explicit check is good for business logic)
+  // 2. Verify Redis Reservation (Reservation-Aware Booking)
+  const reservationKey = reservationService.getReservationKey(eventId, seatId);
+  const reservation = await redis.get(reservationKey);
+
+  if (!reservation) {
+    throw new ApiError(400, 'Seat must be reserved before booking');
+  }
+
+  const reservationData = JSON.parse(reservation);
+  if (reservationData.userId !== userId) {
+    throw new ApiError(403, 'This seat is reserved by another user');
+  }
+
+  // 3. Orchestrate DB Transaction
+  const booking = await prisma.$transaction(async (tx) => {
+    // Re-verify availability inside transaction
     const existingBooking = await tx.booking.findUnique({
       where: {
         eventId_seatId: { eventId, seatId },
@@ -41,19 +54,21 @@ const createBooking = async (bookingBody) => {
       throw new ApiError(400, 'Seat already booked for this event');
     }
 
-    // 3. Create or Update Booking
-    let booking;
+    // Create or Update Booking
+    let newBooking;
     if (existingBooking && existingBooking.status === 'CANCELLED') {
-      // Re-activate a previously cancelled booking record
-      booking = await bookingRepository.updateBookingStatus(existingBooking.id, 'CONFIRMED', tx);
+      newBooking = await bookingRepository.updateBookingStatus(existingBooking.id, 'CONFIRMED', tx);
     } else {
-      booking = await bookingRepository.createBooking({ userId, eventId, seatId }, tx);
+      newBooking = await bookingRepository.createBooking({ userId, eventId, seatId }, tx);
     }
-
-    // [Future extension point: Update related records, e.g., loyalty points, payment logs]
     
-    return booking;
+    return newBooking;
   });
+
+  // 4. Cleanup: Remove Redis Reservation after successful booking
+  await redis.del(reservationKey);
+
+  return booking;
 };
 
 const getBookingById = async (id) => {
@@ -68,9 +83,6 @@ const getBookingsByUser = async (userId) => {
   return bookingRepository.getBookingsByUserId(userId);
 };
 
-/**
- * Cancels a booking within a transaction.
- */
 const cancelBooking = async (id) => {
   return prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id } });
@@ -82,9 +94,6 @@ const cancelBooking = async (id) => {
     }
 
     const updatedBooking = await bookingRepository.updateBookingStatus(id, 'CANCELLED', tx);
-    
-    // [Future extension point: Trigger refund process, update seat availability cache]
-    
     return updatedBooking;
   });
 };

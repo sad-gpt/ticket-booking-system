@@ -27,6 +27,7 @@ app.use('/api/venues/:venueId/seats', seatRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/events/:eventId/availability', availabilityRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/reservations', reservationRoutes);
 app.use('/api/users/:userId/bookings', validate(bookingValidation.getUserBookings), bookingController.getUserBookings);
 
 // 404 handler
@@ -38,3 +39,4 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 export default app;
+ default app;
