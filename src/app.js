@@ -14,6 +14,8 @@ app.use(express.json());
 
 // Routes
 app.use('/api/users', userRoutes);
+app.use('/api/venues', venueRoutes);
+app.use('/api/venues/:venueId/seats', seatRoutes);
 
 // 404 handler
 app.use((req, res, next) => {
@@ -24,3 +26,4 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 export default app;
+
