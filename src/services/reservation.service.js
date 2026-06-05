@@ -3,6 +3,7 @@ import userRepository from '../repositories/user.repository.js';
 import eventRepository from '../repositories/event.repository.js';
 import seatRepository from '../repositories/seat.repository.js';
 import bookingRepository from '../repositories/booking.repository.js';
+import { addReservationCleanupJob } from '../jobs/reservationCleanup.job.js';
 import { ApiError } from '../utils/ApiError.js';
 
 const RESERVATION_TTL = 300; // 5 minutes
@@ -39,13 +40,12 @@ const reserveSeat = async (reservationBody) => {
   if (existingReservation) {
     const data = JSON.parse(existingReservation);
     if (data.userId === userId) {
-      // Already reserved by this user, just return success
       return data;
     }
     throw new ApiError(400, 'Seat currently reserved by another user');
   }
 
-  // 4. Create reservation
+  // 4. Create reservation in Redis
   const reservationData = {
     userId,
     eventId,
@@ -53,7 +53,6 @@ const reserveSeat = async (reservationBody) => {
     reservedAt: Date.now(),
   };
 
-  // Set with TTL and NX (Not eXists) for atomic lock
   const result = await redis.set(
     key,
     JSON.stringify(reservationData),
@@ -65,6 +64,9 @@ const reserveSeat = async (reservationBody) => {
   if (!result) {
     throw new ApiError(400, 'Seat currently reserved (race condition lost)');
   }
+
+  // 5. Add Background Job: Reservation Expiration Logging/Cleanup
+  await addReservationCleanupJob(reservationData);
 
   return reservationData;
 };
@@ -88,7 +90,6 @@ const releaseReservation = async (eventId, seatId, userId) => {
 const getEventReservations = async (eventId) => {
   const pattern = `reservation:event:${eventId}:seat:*`;
   const keys = await redis.keys(pattern);
-  
   if (keys.length === 0) return [];
 
   const reservations = await redis.mget(keys);

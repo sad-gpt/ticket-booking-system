@@ -5,6 +5,7 @@ import userRepository from '../repositories/user.repository.js';
 import eventRepository from '../repositories/event.repository.js';
 import seatRepository from '../repositories/seat.repository.js';
 import reservationService from './reservation.service.js';
+import { addBookingConfirmationJob } from '../jobs/bookingConfirmation.job.js';
 import { ApiError } from '../utils/ApiError.js';
 
 /**
@@ -28,7 +29,7 @@ const createBooking = async (bookingBody) => {
     throw new ApiError(400, 'Seat does not belong to the venue of this event');
   }
 
-  // 2. Verify Redis Reservation (Reservation-Aware Booking)
+  // 2. Verify Redis Reservation
   const reservationKey = reservationService.getReservationKey(eventId, seatId);
   const reservation = await redis.get(reservationKey);
 
@@ -43,7 +44,6 @@ const createBooking = async (bookingBody) => {
 
   // 3. Orchestrate DB Transaction
   const booking = await prisma.$transaction(async (tx) => {
-    // Re-verify availability inside transaction
     const existingBooking = await tx.booking.findUnique({
       where: {
         eventId_seatId: { eventId, seatId },
@@ -54,7 +54,6 @@ const createBooking = async (bookingBody) => {
       throw new ApiError(400, 'Seat already booked for this event');
     }
 
-    // Create or Update Booking
     let newBooking;
     if (existingBooking && existingBooking.status === 'CANCELLED') {
       newBooking = await bookingRepository.updateBookingStatus(existingBooking.id, 'CONFIRMED', tx);
@@ -65,8 +64,16 @@ const createBooking = async (bookingBody) => {
     return newBooking;
   });
 
-  // 4. Cleanup: Remove Redis Reservation after successful booking
+  // 4. Cleanup Redis Reservation
   await redis.del(reservationKey);
+
+  // 5. Add Background Job: Booking Confirmation
+  await addBookingConfirmationJob({
+    bookingId: booking.id,
+    userId: booking.userId,
+    eventId: booking.eventId,
+    seatId: booking.seatId,
+  });
 
   return booking;
 };
@@ -86,9 +93,7 @@ const getBookingsByUser = async (userId) => {
 const cancelBooking = async (id) => {
   return prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id } });
-    
     if (!booking) throw new ApiError(404, 'Booking not found');
-    
     if (booking.status === 'CANCELLED') {
       throw new ApiError(400, 'Booking is already cancelled');
     }

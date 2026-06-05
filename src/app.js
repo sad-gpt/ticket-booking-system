@@ -7,11 +7,17 @@ import seatRoutes from './routes/seat.routes.js';
 import eventRoutes from './routes/event.routes.js';
 import availabilityRoutes from './routes/availability.routes.js';
 import bookingRoutes from './routes/booking.routes.js';
+import reservationRoutes from './routes/reservation.routes.js';
+import queueRoutes from './routes/queue.routes.js';
 import bookingController from './controllers/booking.controller.js';
 import bookingValidation from './validations/booking.validation.js';
 import { validate } from './middlewares/validate.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { ApiError } from './utils/ApiError.js';
+
+// Import workers to ensure they are initialized
+import './workers/bookingConfirmation.worker.js';
+import './workers/reservationCleanup.worker.js';
 
 const app = express();
 
@@ -28,6 +34,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/events/:eventId/availability', availabilityRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/reservations', reservationRoutes);
+app.use('/api/queues', queueRoutes);
 app.use('/api/users/:userId/bookings', validate(bookingValidation.getUserBookings), bookingController.getUserBookings);
 
 // 404 handler
@@ -39,4 +46,3 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 export default app;
- default app;
