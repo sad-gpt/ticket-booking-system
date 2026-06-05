@@ -1,135 +1,56 @@
-# Project: Ticket Booking System (Phase 1 Architecture)
+# Project: High-Concurrency Movie Ticket Booking System
 
-This document outlines the engineering standards, architecture, and design for the initial phase of the high-concurrency ticket booking system.
+This document outlines the engineering standards, architecture, and design for the high-concurrency ticket booking system.
 
-## 1. Folder Structure (Target)
+## 1. Folder Structure
 ```text
 ticket-booking-backend/
 ├── prisma/
 │   └── schema.prisma         # Prisma database schema and models
 ├── src/
-│   ├── config/               # Environment variables and configuration logic
-│   ├── routes/               # API route definitions and HTTP method mapping
-│   ├── controllers/          # Request handling, extraction, and response formatting
-│   ├── services/             # Core business logic and orchestration
-│   ├── repositories/         # Database interaction (Data Access Layer)
-│   ├── middlewares/          # Express middlewares (error handling, logging)
-│   ├── validations/          # Request payload validation schemas (e.g., Zod or Joi)
-│   ├── utils/                # Helper functions, custom error classes, formatters
+│   ├── config/               # Configuration (Prisma, Redis, Queues)
+│   ├── routes/               # API route definitions
+│   ├── controllers/          # Request handling
+│   ├── services/             # Core business logic (Transactions, Reservations)
+│   ├── repositories/         # Data Access Layer (Prisma queries)
+│   ├── middlewares/          # Global error handling, validation
+│   ├── validations/          # Zod schemas
+│   ├── utils/                # Custom error classes
+│   ├── workers/              # BullMQ workers
+│   ├── jobs/                 # BullMQ job definitions
 │   ├── app.js                # Express application setup
-│   └── server.js             # Entry point, starts the HTTP server
+│   ├── server.js             # API entry point
+│   └── worker.js             # Background worker entry point
+├── Dockerfile                # API & Worker image definition
+├── docker-compose.yml        # Multi-container orchestration
 ├── .env                      # Environment variables
-├── .gitignore                # Git ignore rules
-└── package.json              # Project dependencies and scripts
+├── .dockerignore             # Docker build exclusions
+└── package.json              # Project dependencies
 ```
 
-## 2. Layer Responsibilities
+## 2. Tech Stack
+- **Node.js & Express**: Backend framework
+- **PostgreSQL**: Primary relational database
+- **Prisma**: Type-safe ORM
+- **Redis**: In-memory store for seat reservations
+- **BullMQ**: Distributed job queue for background tasks
+- **Docker**: Containerization and orchestration
 
-*   **Routes (`src/routes/`):** Matches incoming HTTP requests to Controller functions. No business logic.
-*   **Controllers (`src/controllers/`):** Extracts data from the HTTP Request, calls Services, and returns HTTP Responses.
-*   **Services (`src/services/`):** Core business logic engine. Orchestrates domain rules (e.g., "Max 4 seats per user").
-*   **Repositories (`src/repositories/`):** Data Access Layer. Handles all direct Prisma queries.
-*   **Validations (`src/validations/`):** Schema-based input validation (e.g., using Zod).
-*   **Middlewares (`src/middlewares/`):** Cross-cutting concerns like global error handling and logging.
+## 3. Architecture Rules
+- **Layered Architecture**: Route -> Controller -> Service -> Repository -> Database.
+- **Atomic Transactions**: All booking-related writes use Prisma transactions.
+- **Reservation Layer**: Redis handles 5-minute seat locks to prevent race conditions.
+- **Asynchronous Processing**: Non-critical tasks (confirmations, cleanup) are offloaded to BullMQ.
 
-## 3. Example Request Flow: Booking a Ticket
-1.  **Route** (`POST /api/bookings`) calls `BookingController.createBooking`.
-2.  **Controller** extracts `{ eventId, seatId, userId }`, calls `BookingService.processBooking`.
-3.  **Service** validates event existence, seat availability, and pricing. Calls `BookingRepository.create`.
-4.  **Repository** executes a Prisma transaction to save the booking and lock the seat.
-5.  **Controller** returns `201 Created` with the booking object.
+## 4. Dockerization
+The project is fully containerized with four main services:
+- `ticket-booking-api`: The Express server.
+- `ticket-booking-worker`: Dedicated container for background jobs.
+- `ticket-booking-db`: PostgreSQL instance with persistent volumes.
+- `ticket-booking-redis`: Redis instance for reservations and queues.
 
-## 4. Initial Prisma Schema Design
-
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model User {
-  id        Int       @id @default(autoincrement())
-  email     String    @unique
-  name      String
-  bookings  Booking[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-}
-
-model Venue {
-  id        Int      @id @default(autoincrement())
-  name      String
-  address   String
-  seats     Seat[]
-  events    Event[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Event {
-  id          Int       @id @default(autoincrement())
-  title       String
-  date        DateTime
-  venueId     Int
-  venue       Venue     @relation(fields: [venueId], references: [id])
-  bookings    Booking[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-}
-
-model Seat {
-  id        Int       @id @default(autoincrement())
-  row       String
-  number    Int
-  type      SeatType  @default(REGULAR)
-  venueId   Int
-  venue     Venue     @relation(fields: [venueId], references: [id])
-  bookings  Booking[]
-  
-  @@unique([venueId, row, number])
-}
-
-enum SeatType {
-  REGULAR
-  VIP
-  ACCESSIBLE
-}
-
-model Booking {
-  id        Int           @id @default(autoincrement())
-  userId    Int
-  user      User          @relation(fields: [userId], references: [id])
-  eventId   Int
-  event     Event         @relation(fields: [eventId], references: [id])
-  seatId    Int
-  seat      Seat          @relation(fields: [seatId], references: [id])
-  status    BookingStatus @default(CONFIRMED)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
-  @@unique([eventId, seatId])
-}
-
-enum BookingStatus {
-  CONFIRMED
-  CANCELLED
-}
-```
-
-## 5. REST API Endpoints (Phase 1)
-- `POST /api/users` / `GET /api/users/:id`
-- `POST /api/venues` / `POST /api/venues/:id/seats` / `GET /api/venues/:id/seats`
-- `POST /api/events` / `GET /api/events` / `GET /api/events/:id/availability`
-- `POST /api/bookings` / `GET /api/bookings/:id` / `DELETE /api/bookings/:id`
-
-## 6. Recommended Development Order
-1. Boilerplate (Express, Prisma, Global Error Handler).
-2. Domain Models CRUD (User, Venue, Seat).
-3. Events Implementation.
-4. Booking Engine (Prisma Transactions).
-5. Availability Engine (Joining Seats and Bookings).
-6. Input Validation & Custom Errors.
+## 5. Development Workflow
+1. Clone the repository.
+2. Create `.env` from template.
+3. Run `docker compose up --build`.
+4. Apply migrations: `docker compose exec ticket-booking-api npx prisma migrate deploy`.

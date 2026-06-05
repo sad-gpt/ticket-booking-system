@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  ticket-booking-db:
+    image: postgres:15-alpine
+    container_name: ticket-booking-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin1234}
+      POSTGRES_DB: ${POSTGRES_DB:-ticket_booking_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ticket-booking-redis:
+    image: redis:7-alpine
+    container_name: ticket-booking-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ticket-booking-api:
+    build: .
+    container_name: ticket-booking-api
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-admin1234}@ticket-booking-db:5432/${POSTGRES_DB:-ticket_booking_db}?schema=public
+      - REDIS_URL=redis://ticket-booking-redis:6379
+      - PORT=5000
+      - NODE_ENV=development
+    depends_on:
+      ticket-booking-db:
+        condition: service_healthy
+      ticket-booking-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:5000/api/users', (res) => res.statusCode === 200 ? process.exit(0) : process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ticket-booking-worker:
+    build: .
+    container_name: ticket-booking-worker
+    restart: always
+    command: node src/worker.js
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-admin1234}@ticket-booking-db:5432/${POSTGRES_DB:-ticket_booking_db}?schema=public
+      - REDIS_URL=redis://ticket-booking-redis:6379
+      - NODE_ENV=development
+    depends_on:
+      ticket-booking-db:
+        condition: service_healthy
+      ticket-booking-redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

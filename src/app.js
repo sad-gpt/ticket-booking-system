@@ -15,10 +15,6 @@ import { validate } from './middlewares/validate.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { ApiError } from './utils/ApiError.js';
 
-// Import workers to ensure they are initialized
-import './workers/bookingConfirmation.worker.js';
-import './workers/reservationCleanup.worker.js';
-
 const app = express();
 
 // Middlewares
