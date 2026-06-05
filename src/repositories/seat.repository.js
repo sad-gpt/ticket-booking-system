@@ -35,9 +35,16 @@ const getSeatByLocation = async (venueId, row, number) => {
   });
 };
 
+const getSeatById = async (id) => {
+  return prisma.seat.findUnique({
+    where: { id },
+  });
+};
+
 export default {
   createSeat,
   createManySeats,
   getSeatsByVenueId,
   getSeatByLocation,
+  getSeatById,
 };

@@ -2,6 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import userRoutes from './routes/user.routes.js';
+import venueRoutes from './routes/venue.routes.js';
+import seatRoutes from './routes/seat.routes.js';
+import eventRoutes from './routes/event.routes.js';
+import availabilityRoutes from './routes/availability.routes.js';
+import bookingRoutes from './routes/booking.routes.js';
+import bookingController from './controllers/booking.controller.js';
+import bookingValidation from './validations/booking.validation.js';
+import { validate } from './middlewares/validate.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { ApiError } from './utils/ApiError.js';
 
@@ -16,6 +24,10 @@ app.use(express.json());
 app.use('/api/users', userRoutes);
 app.use('/api/venues', venueRoutes);
 app.use('/api/venues/:venueId/seats', seatRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/events/:eventId/availability', availabilityRoutes);
+app.use('/api/bookings', bookingRoutes);
+app.use('/api/users/:userId/bookings', validate(bookingValidation.getUserBookings), bookingController.getUserBookings);
 
 // 404 handler
 app.use((req, res, next) => {
@@ -26,4 +38,3 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 export default app;
-
